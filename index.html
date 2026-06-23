@@ -207,7 +207,7 @@
         ※ まいにち つかう ときは、スマホの メニューから<br>「ホーム画面に 追加」を してください。
     </div>
 
-    <script>
+<script>
 if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('./sw.js').catch(err => console.log("SW error", err));
 }
@@ -394,7 +394,6 @@ async function onScanSuccess(decodedText, decodedResult) {
                 let warningReason = "";
                 const host = urlObj.hostname.toLowerCase();
                 
-                // ドメイン部分の簡易的な「読める」表示用テキスト
                 const readableHost = host.replace('www.', '');
 
                 if (host === "localhost" || host.endsWith(".local")) {
@@ -413,7 +412,6 @@ async function onScanSuccess(decodedText, decodedResult) {
                     isDangerous = true;
                     warningReason = "@ があるため<br>あやしいページです。";
                 }
-                // 短縮URLの検出強化
                 else if (
                     /(bit\.ly|tinyurl\.com|t\.co|goo\.gl|is\.gd|ow\.ly|buff\.ly|cutt\.ly|rebrand\.ly|tiny\.cc|qrco\.de|me-qr\.com)$/.test(host) ||
                     host.includes("bit.ly") || host.includes("tinyurl.com")
@@ -426,32 +424,27 @@ async function onScanSuccess(decodedText, decodedResult) {
                     warningReason = "にせものの名前を<br>つかっている<br>かもしれません。";
                 }
                 else if (urlObj.protocol === "http:") {
-    isDangerous = true;
-    warningReason = "カギマークのない<br>あぶない ページ<br>かもしれません。";
-}
-else {
+                    isDangerous = true;
+                    warningReason = "カギマークのない<br>あぶない ページ<br>かもしれません。";
+                }
+                else {
+                    const dangerousTld = /\.(loan|gq|cf|tk|ml)$/i.test(host);
+                    const warningTld = /\.(shop|online|club|cc|site|biz|work|live|xyz|top|vip|icu|fit)$/i.test(host);
 
-    const dangerousTld =
-        /\.(loan|gq|cf|tk|ml)$/i.test(host);
+                    if (dangerousTld) {
+                        isDangerous = true;
+                        warningReason = "とても危険な種類の\nホームページです。";
+                    }
+                    else if (warningTld) {
+                        warningReason = "見慣（な）れない名前の\nホームページです。";
+                        isShortUrl = true; 
+                    }
 
-    const warningTld =
-        /\.(shop|online|club|cc|site|biz|work|live|xyz|top|vip|icu|fit)$/i.test(host);
-
-    if (dangerousTld) {
-        isDangerous = true;
-        warningReason = "とても危険な種類の\nホームページです。";
-    }
-    else if (warningTld) {
-        warningReason = "見慣（な）れない名前の\nホームページです。";
-        isShortUrl = true; // 黄色表示用に流用
-    }
-
-    // ブランドなりすまし判定
-    const brandKeywords = [
-        "amazon","card","rakuten","docomo",
-        "vj","smbc","mufg","aeon",
-        "post","yamato","sagawa"
-    ];
+                    const brandKeywords = [
+                        "amazon","card","rakuten","docomo",
+                        "vj","smbc","mufg","aeon",
+                        "post","yamato","sagawa"
+                    ];
                     const hasBrandKeyword = brandKeywords.some(kw => host.includes(kw));
 
                     if (hasBrandKeyword) {
@@ -518,7 +511,6 @@ else {
     }
 }
 
-// 🌟 安全な遷移関数（イベント引数を追加、フラグ制御に変更）
 function openTargetUrl(event) {
     if (!targetUrl) return;
 
@@ -533,55 +525,61 @@ function openTargetUrl(event) {
 
     const goBtn = document.getElementById('go-btn');
 
-    // フォールバックモード（ネイティブaタグジャンプモード）の場合
     if (isFallbackMode) {
-        return; // aタグの標準挙動（href）で遷移させるため、JS処理はここで終了
+        return; 
     }
 
-    // 1. 通常のウィンドウオープンを試みる
     const newWindow = window.open(targetUrl, "_blank", "noopener,noreferrer");
 
-    // 2. window.open が失敗（null）した場合のフォールバック処理
     if (!newWindow) {
         console.log("ポップアップがブロックされました。通常のリンクモードに切り替えます。");
         
-        isFallbackMode = true; // 🌟 フラグを立てる
+        isFallbackMode = true; 
         goBtn.setAttribute('href', targetUrl);
         goBtn.setAttribute('target', '_blank');
         
-        // 🌟 視覚的フィードバック
         goBtn.style.backgroundColor = "#1565c0";
         goBtn.style.boxShadow = "0 8px #0d3c75";
         goBtn.innerHTML = "➔ もういちど\nここを おしてください";
         
-        // 最初のクリックイベント自体をキャンセルしてジャンプを防ぐ
         event.preventDefault();
     }
 }
 
-window.addEventListener('DOMContentLoaded', async () => {
+// 🌟 初回読み込みと「戻るボタン（復活）」イベントを一元管理
+window.addEventListener('pageshow', async (event) => {
+    console.log("ページ表示（pageshow検出）: カメラをリセットします");
+
     switchEl = document.getElementById('barcode-switch');
-
-    const savedSetting = localStorage.getItem('allowBarcode');
-    switchEl.checked = savedSetting === 'true';
-
-    await startScanner();
-});
-
-document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && html5Qrcode && appState === 'idle') {
-        setTimeout(async () => {
-            if (appState !== 'idle') return;
-
-            const resultBlock = document.getElementById('result');
-            resultBlock.style.fontSize = "22px";
-            resultBlock.innerText = "カメラをじゅんび しています";
-            document.getElementById('go-btn').style.display = "none"; 
-            document.getElementById('retry-btn').style.display = "none"; 
-
-            await startScanner();
-        }, 150);
+    if (switchEl) {
+        const savedSetting = localStorage.getItem('allowBarcode');
+        switchEl.checked = savedSetting === 'true';
     }
+
+    // 進行中のインスタンスがあれば確実に停止とクリアを行う
+    if (html5Qrcode) {
+        try {
+            await html5Qrcode.stop();
+            await html5Qrcode.clear();
+        } catch(e) {
+            console.log("事前停止クリーンアップ処理:", e);
+        }
+    }
+
+    // UIとアプリ状態を完全に初期化
+    appState = 'idle';
+    const resultBlock = document.getElementById('result');
+    if (resultBlock) resultBlock.innerText = "カメラをじゅんび しています";
+    
+    const goBtn = document.getElementById('go-btn');
+    const retryBtn = document.getElementById('retry-btn');
+    if (goBtn) goBtn.style.display = "none";
+    if (retryBtn) retryBtn.style.display = "none";
+
+    // ハードウェアの解放待ちを考慮し、微小な遅延を挟んでセーフに再起動
+    setTimeout(async () => {
+        await startScanner();
+    }, 300);
 });
     </script>
 </body>
