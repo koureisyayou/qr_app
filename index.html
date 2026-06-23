@@ -3,14 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>バーコードを よむ</title>
+    <title>QRコードを よむ</title>
     
     <link rel="manifest" href="manifest.json">
     <meta name="theme-color" content="#4CAF50">
     <link rel="apple-touch-icon" href="icon-192.png">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta name="apple-mobile-web-app-title" content="バーコードを よむ">
+    <meta name="apple-mobile-web-app-title" content="QRコードを よむ">
 
     <script src="html5-qrcode.min.js"></script>
     
@@ -36,6 +36,59 @@
             margin-bottom: 15px;
             min-height: 30px;
         }
+        
+        /* 🛠️ バーコード切り替えスイッチのデザイン */
+        .setting-box {
+            background: #eef2f3;
+            border: 2px solid #ccc;
+            border-radius: 12px;
+            padding: 12px;
+            max-width: 450px;
+            margin: 0 auto 15px auto;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 15px;
+        }
+        .setting-label {
+            font-size: 18px;
+            font-weight: bold;
+            color: #444;
+            cursor: pointer;
+        }
+        .switch-input {
+            display: none;
+        }
+        .switch-toggle {
+            position: relative;
+            display: inline-block;
+            width: 70px;
+            height: 36px;
+            background-color: #ccc;
+            border-radius: 18px;
+            transition: background-color 0.3s;
+            cursor: pointer;
+            vertical-align: middle;
+        }
+        .switch-toggle::after {
+            content: '';
+            position: absolute;
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            background-color: white;
+            top: 3px;
+            left: 3px;
+            transition: transform 0.3s;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+        .switch-input:checked + .switch-toggle {
+            background-color: #2e7d32; /* オンになったらシニアに優しい深緑 */
+        }
+        .switch-input:checked + .switch-toggle::after {
+            transform: translateX(34px);
+        }
+
         /* カメラ枠 */
         #reader {
             width: 100%;
@@ -63,6 +116,7 @@
         }
         #result {
             font-size: 32px;
+            min-height: 120px;
             font-weight: bold;
             color: #333;
             word-break: break-all;
@@ -81,6 +135,7 @@
             border: none;
             border-radius: 16px;
             cursor: pointer;
+            white-space: pre-line;
         }
         /* ひらくボタン（デフォルトは緑） */
         #go-btn {
@@ -112,7 +167,14 @@
 </head>
 <body>
 
-    <h1>バーコードを よむ</h1>
+    <h1>QRコードを よむ</h1>
+    
+    <div class="setting-box">
+        <label for="barcode-switch" class="setting-label">📋 おみせの商品バーコードも よむ</label>
+        <input type="checkbox" id="barcode-switch" class="switch-input" onchange="toggleBarcodeSetting()">
+        <label for="barcode-switch" class="switch-toggle"></label>
+    </div>
+
     <p id="guide" class="setsumei">しかくのなかに うつしてください</p>
     
     <div id="reader"></div>
@@ -122,188 +184,273 @@
     </div>
 
     <button id="go-btn" class="go-btn" onclick="openTargetUrl()">➔ ホームページをひらく</button>
-    <button id="retry-btn" class="go-btn" onclick="startScanner()">➔ もう一度よみとる</button>
+    <button id="retry-btn" class="go-btn" onclick="startScanner()">➔ もう一度<br>よみとる</button>
 
     <div class="pwa-guide">
         ※ まいにち つかう ときは、スマホの メニューから<br>「ホーム画面に 追加」を してください。
     </div>
 
     <script>
-        // PWAのサービスワーカー登録
-        if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.register('./sw.js').catch(err => console.log("SW error", err));
+// PWAのサービスワーカー登録
+if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('./sw.js').catch(err => console.log("SW error", err));
+}
+
+let html5Qrcode = null; 
+let targetUrl = "";
+let audioCtx = null;
+let switchEl = null;
+
+// 🔒 カメラの起動・停止の競合を防ぐための管理フラグ
+let scannerBusy = false; 
+
+// スイッチが切り替わったらカメラを安全に再起動する関数
+async function toggleBarcodeSetting() {
+    if (!switchEl) return;
+    localStorage.setItem('allowBarcode', switchEl.checked);
+    
+    if (scannerBusy) return;
+    scannerBusy = true;
+
+    if (html5Qrcode && html5Qrcode.isScanning) {
+        try {
+            await html5Qrcode.stop();
+        } catch (e) {
+            console.log("カメラ停止時の軽微なエラーを無視:", e);
         }
-
-        let html5Qrcode = null; 
-        let targetUrl = "";
-        let audioCtx = null;
-
-        // ピッ音
-        function playBeep() {
-            try {
-                if (!audioCtx) {
-                    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-                }
-                if (audioCtx && audioCtx.state === "suspended") {
-                    audioCtx.resume().catch(() => {});
-                }
-
-                let osc1 = audioCtx.createOscillator();
-                let gain1 = audioCtx.createGain();
-                osc1.type = 'sine';
-                osc1.frequency.setValueAtTime(2000, audioCtx.currentTime);
-                gain1.gain.setValueAtTime(0.2, audioCtx.currentTime);
-                osc1.connect(gain1);
-                gain1.connect(audioCtx.destination);
-                osc1.start();
-                osc1.stop(audioCtx.currentTime + 0.05);
-
-                setTimeout(() => {
-                    let osc2 = audioCtx.createOscillator();
-                    let gain2 = audioCtx.createGain();
-                    osc2.type = 'sine';
-                    osc2.frequency.setValueAtTime(2000, audioCtx.currentTime);
-                    gain2.gain.setValueAtTime(0.2, audioCtx.currentTime);
-                    osc2.connect(gain2);
-                    gain2.connect(audioCtx.destination);
-                    osc2.start();
-                    osc2.stop(audioCtx.currentTime + 0.05);
-                }, 60);
-            } catch (e) {
-                console.log("Audio error");
-            }
-        }
-
-        // カメラ起動
-        function startScanner() {
-            document.getElementById('result').innerText = "カメラをじゅんび しています";
-            document.getElementById('guide').innerText = "しかくのなかに うつしてください";
-            document.getElementById('go-btn').style.display = "none"; 
-            document.getElementById('retry-btn').style.display = "none"; 
-            targetUrl = "";
-
-            if (!html5Qrcode) {
-                html5Qrcode = new Html5Qrcode("reader");
-            }
-
-            const config = {
-                fps: 20, 
-                qrbox: { width: 320, height: 140 },
-                experimentalFeatures: { useBarCodeDetectorIfSupported: true }
-            };
-
-            html5Qrcode.start(
-                { facingMode: "environment" }, 
-                config, 
-                onScanSuccess, 
-                onScanFailure
-            ).then(() => {
-                document.getElementById('result').innerText = "うつしてください";
-            }).catch(err => {
-                document.getElementById('result').innerText = "うつりません";
-                document.getElementById('retry-btn').style.display = "block";
-            });
-        }
-
-        // よみとり成功時の処理（安全チェック機能付き）
-        function onScanSuccess(decodedText, decodedResult) {
-            playBeep();
-            if (navigator.vibrate) { navigator.vibrate([100, 50, 100]); }
-
-            document.getElementById('guide').innerText = "よみとれました";
-            
-            html5Qrcode.stop().then(() => {
-                let text = decodedText.trim().replace(/\u3000/g, " ");
-                let isUrl = false;
-                let fixed = text;
-
-                if (!/^https?:\/\//i.test(fixed) && fixed.includes(".") && !fixed.includes("@") && !fixed.includes(" ")) {
-                    fixed = "https://" + fixed;
-                }
-
-                if (/^https?:\/\//i.test(fixed)) { isUrl = true; }
-
-                if (isUrl) {
-                    try {
-                        let urlObj = new URL(fixed);
-                        targetUrl = fixed;
-                        const goBtn = document.getElementById('go-btn');
-                        const resultBlock = document.getElementById('result');
-
-                        // --- 🛡️ 危険チェック機能 ---
-                        let isDangerous = false;
-                        let warningReason = "";
-
-                        // ① 暗号化されていない (http)
-                        if (urlObj.protocol === "http:") {
-                            isDangerous = true;
-                            warningReason = "カギマークのない あぶない ページ かもしれません。";
-                        }
-                        // ② 詐欺サイトに多い見慣れないドメイン末尾
-                        else if (/\.(xyz|top|loan|click|work|link|club|biz)$/i.test(urlObj.hostname)) {
-                            isDangerous = true;
-                            warningReason = "み慣れない うしろの文字（ドメイン）です。ちゅうい してください。";
-                        }
-                        // ③ 有名企業を装う怪しいURL（本物ドメイン以外を検知）
-                        else if (/(amazon|card|rakuten|docomo|au|softbank|post|yamato)/i.test(urlObj.hostname)) {
-                            if (!/\.(amazon\.co\.jp|rakuten\.co\.jp|docomo\.ne\.jp|au\.com|softbank\.jp|japanpost\.jp|kuronekoyamato\.co\.jp)$/i.test(urlObj.hostname)) {
-                                isDangerous = true;
-                                warningReason = "有名なお店 や 会社の フリをした 偽物（にせもの）かもしれません！";
-                            }
-                        }
-
-                        // --- 🎨 結果に合わせてボタンと色を変化 ---
-                        if (isDangerous) {
-                            resultBlock.innerHTML = `<span style="color: #d32f2f; font-size: 24px;">⚠ あぶない かもしれません！</span><br><span style="font-size: 16px; color: #555;">${warningReason}</span>`;
-                            goBtn.innerText = "➔ ちゅういして ひらく（おさないでね）";
-                            goBtn.style.backgroundColor = "#e65100"; // 警告オレンジ色
-                            goBtn.style.boxShadow = "0 8px #b54000";
-                        } else {
-                            const isAppStore = targetUrl.includes("apps.apple.com") || targetUrl.includes("play.google.com");
-                            if (isAppStore) {
-                                resultBlock.innerText = "アプリがみつかりました";
-                                goBtn.innerText = "➔ アプリストアをひらく";
-                            } else {
-                                resultBlock.innerText = "ホームページがみつかりました";
-                                goBtn.innerText = "➔ ホームページをひらく";
-                            }
-                            goBtn.style.backgroundColor = "#2e7d32"; // 通常の安全な緑色
-                            goBtn.style.boxShadow = "0 8px #1b5e20";
-                        }
-
-                        setTimeout(() => { goBtn.style.display = "block"; }, 300);
-
-                    } catch (e) {
-                        document.getElementById('result').innerText = "読み取りました（URLエラー）：" + text;
-                    }
-                } else {
-                    document.getElementById('result').innerText = "読み取りました：" + text;
-                }
-
-                setTimeout(() => { document.getElementById('retry-btn').style.display = "block"; }, 300);
-
-            }).catch(err => {
-                console.error(err);
-                try { html5Qrcode.clear(); } catch(e) {}
-            });
-        }
-
-        function onScanFailure(error) {}
-
-function openTargetUrl() {
-    if (targetUrl) {
-        // 🌐 インターネットに繋がっていない（オフライン）場合
-        if (!navigator.onLine) {
-            alert("⚠️ インターネットに つながっていません。\n\n「機内（きない）モード」を オフにするか、電波（でんぱ）の あるところで もう一度おしてください。");
-            return; // ページ移動をストップする
-        }
+    }
+    
+    try {
+    await startScanner();
+} finally {
+    scannerBusy = false;
+}
+} 
         
-        // 電波がある場合は通常通りページを開く
-        window.location.href = targetUrl;
+// ピッ音
+function playBeep() {
+    try {
+        if (!audioCtx) {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        if (audioCtx && audioCtx.state === "suspended") {
+            audioCtx.resume().catch(() => {});
+        }
+
+        let osc1 = audioCtx.createOscillator();
+        let gain1 = audioCtx.createGain();
+        osc1.type = 'sine';
+        osc1.frequency.setValueAtTime(2000, audioCtx.currentTime);
+        gain1.gain.setValueAtTime(0.2, audioCtx.currentTime);
+        osc1.connect(gain1);
+        gain1.connect(audioCtx.destination);
+        osc1.start();
+        osc1.stop(audioCtx.currentTime + 0.05);
+
+        setTimeout(() => {
+            let osc2 = audioCtx.createOscillator();
+            let gain2 = audioCtx.createGain();
+            osc2.type = 'sine';
+            osc2.frequency.setValueAtTime(2000, audioCtx.currentTime);
+            gain2.gain.setValueAtTime(0.2, audioCtx.currentTime);
+            osc2.connect(gain2);
+            gain2.connect(audioCtx.destination);
+            osc2.start();
+            osc2.stop(audioCtx.currentTime + 0.05);
+        }, 60);
+    } catch (e) {
+        console.log("Audio error");
     }
 }
 
-        startScanner();
+// 💡 安全にカメラスキャンを開始する関数
+async function startScanner() {
+    // 【修正ポイント】すでにスキャン中の場合は、二重起動を防ぐためにここで処理を抜ける
+    if (html5Qrcode && html5Qrcode.isScanning) {
+        return;
+    }
+
+    document.getElementById('result').innerText = "カメラをじゅんび しています";
+    document.getElementById('guide').innerText = "しかくのなかに うつしてください";
+    document.getElementById('go-btn').style.display = "none"; 
+    document.getElementById('retry-btn').style.display = "none"; 
+    targetUrl = "";
+
+    if (!html5Qrcode) {
+        html5Qrcode = new Html5Qrcode("reader");
+    }
+
+    let formats = [ Html5QrcodeSupportedFormats.QR_CODE ];
+    const isBarcodeOn = switchEl && switchEl.checked;
+    
+    if (isBarcodeOn) {
+        formats.push(Html5QrcodeSupportedFormats.EAN_13);
+        formats.push(Html5QrcodeSupportedFormats.EAN_8);
+        formats.push(Html5QrcodeSupportedFormats.UPC_A);
+        formats.push(Html5QrcodeSupportedFormats.UPC_E);
+        formats.push(Html5QrcodeSupportedFormats.CODE_128);
+    }
+
+    const config = {
+        fps: 20, 
+        qrbox: { width: 320, height: isBarcodeOn ? 220 : 140 }, 
+        formatsToSupport: formats,
+        experimentalFeatures: { useBarCodeDetectorIfSupported: true }
+    };
+
+    return html5Qrcode.start(
+        { facingMode: "environment" }, 
+        config, 
+        onScanSuccess, 
+        onScanFailure
+    ).then(() => {
+        document.getElementById('result').innerText = "うつしてください";
+    }).catch(err => {
+        console.error(err);
+        document.getElementById('result').innerText = "うつりません";
+        document.getElementById('retry-btn').style.display = "block";
+    });
+}
+
+// よみとり成功時の処理
+async function onScanSuccess(decodedText, decodedResult) {
+    if (scannerBusy) return;
+    scannerBusy = true;
+
+    try {
+
+    playBeep();
+    if (navigator.vibrate) { navigator.vibrate([100, 50, 100]); }
+
+    document.getElementById('guide').innerText = "よみとれました";
+    
+    if (html5Qrcode && html5Qrcode.isScanning) {
+        try {
+            await html5Qrcode.stop();
+        } catch(e){}
+    }
+
+    let text = decodedText.trim().replace(/\u3000/g, " ");
+    let isUrl = false;
+    let fixed = text;
+
+    if (!/^https?:\/\//i.test(fixed) && fixed.includes(".") && !fixed.includes("@") && !fixed.includes(" ")) {
+        fixed = "https://" + fixed;
+    }
+
+    if (/^https?:\/\//i.test(fixed)) { isUrl = true; }
+
+    const goBtn = document.getElementById('go-btn');
+    const resultBlock = document.getElementById('result');
+
+    if (isUrl) {
+        try {
+            let urlObj = new URL(fixed);
+            targetUrl = fixed;
+
+            let isDangerous = false;
+            let warningReason = "";
+            const host = urlObj.hostname.toLowerCase();
+
+            if (urlObj.protocol === "http:") {
+                isDangerous = true;
+                warningReason = "カギマークのない<br>あぶない ページ<br>かもしれません。";
+            }
+            else if (/\.(xyz|top|loan|click|work|link|club|biz|shop|site|online|live)$/i.test(host)) {
+                isDangerous = true;
+                warningReason = "見慣（な）れない<br>うしろの文字（ドメイン）です。<br>ちゅうい してください。";
+            }
+            else {
+                const keywords = ["amazon", "card", "rakuten", "docomo", "au", "softbank", "post", "yamato"];
+                const hasKeyword = keywords.some(kw => host.includes(kw));
+
+                if (hasKeyword) {
+                    const trustedDomains = [
+                        "amazon.co.jp", "rakuten.co.jp", "docomo.ne.jp", "au.com", "softbank.jp", "japanpost.jp", "kuronekoyamato.co.jp"
+                    ];
+                    const isTrusted = trustedDomains.some(domain => host === domain || host.endsWith("." + domain));
+                    if (!isTrusted) {
+                        isDangerous = true;
+                        warningReason = "有名なお店 や 会社の<br>フリをした 偽物（にせもの）<br>かもしれません！";
+                    }
+                }
+            }
+
+            if (isDangerous) {
+                resultBlock.innerHTML = `<span style="color: #d32f2f; font-size: 24px; line-height: 1.3; font-weight: bold;">⚠ あぶない<br>かもしれません！</span><br><br><span style="font-size: 16px; color: #555; line-height: 1.4;">${warningReason}</span>`;
+                goBtn.innerHTML = "➔ ちゅういして<br>ひらく<br>（おさないでね）";
+                goBtn.style.backgroundColor = "#e65100"; 
+                goBtn.style.boxShadow = "0 8px #b54000";
+            } else {
+                const isAppStore = targetUrl.includes("apps.apple.com") || targetUrl.includes("play.google.com");
+                if (isAppStore) {
+                    resultBlock.innerHTML = "アプリが<br>みつかりました";
+                    goBtn.innerHTML = "➔ アプリストアを<br>ひらく";
+                } else {
+                    resultBlock.innerHTML = "ホームページが<br>みつかりました";
+                    goBtn.innerHTML = "➔ ホームページを<br>ひらく";
+                }
+                goBtn.style.backgroundColor = "#2e7d32"; 
+                goBtn.style.boxShadow = "0 8px #1b5e20";
+            }
+            setTimeout(() => { goBtn.style.display = "block"; }, 300);
+        } catch (e) {
+            resultBlock.innerHTML = "ホームページでは<br>ありませんでした";
+        }
+    } else {
+        if (/^\d{8,14}$/.test(text)) {
+            resultBlock.innerHTML = `バーコードを<br>よみました！<br><span style="font-size: 20px; color: #666;">（すうじ: ${text}）</span>`;
+            goBtn.innerHTML = "➔ この商品を<br>ネットで さがす";
+        } else {
+            resultBlock.innerHTML = `もじを<br>よみました！<br><span style="font-size: 20px; color: #666;">${text}</span>`;
+            goBtn.innerHTML = "➔ この文字を<br>ネットで さがす";
+        }
+        targetUrl = "https://www.google.co.jp/search?q=" + encodeURIComponent(text);
+        goBtn.style.backgroundColor = "#2e7d32";
+        goBtn.style.boxShadow = "0 8px #1b5e20";
+        setTimeout(() => { goBtn.style.display = "block"; }, 300);
+    }
+    setTimeout(() => { document.getElementById('retry-btn').style.display = "block"; }, 300);
+
+    } finally {
+        scannerBusy = false;
+}
+}
+        
+function onScanFailure(error) {}
+
+// 安全な遷移関数
+function openTargetUrl() {
+    if (!targetUrl) return;
+
+    if (!navigator.onLine) {
+        alert(
+            "⚠️ インターネットに つながっていません。\n\n" +
+            "でんぱ のあるところで\n" +
+            "もういちど おしてください。"
+        );
+        return;
+    }
+
+    window.open(targetUrl, "_blank", "noopener,noreferrer");
+}
+
+// 🛠️ 画面準備完了時（初期起動）の処理
+window.addEventListener('DOMContentLoaded', async () => {
+    switchEl = document.getElementById('barcode-switch');
+
+    const savedSetting = localStorage.getItem('allowBarcode');
+    switchEl.checked = savedSetting === 'true';
+
+    // 起動時も最初にフラグを立ててガードする
+    if (scannerBusy) return;
+    scannerBusy = true;
+    try {
+        await startScanner();
+    } finally {
+        scannerBusy = false;
+    }
+});
     </script>
 </body>
 </html>
