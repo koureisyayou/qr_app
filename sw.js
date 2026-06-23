@@ -1,14 +1,14 @@
-const CACHE_NAME = 'barcode-yomu-v1.0.2';
+const CACHE_NAME = 'barcode-yomu-v1.0.3'; // バージョンを少し上げました
 // 上の番号を更新毎に増やす
 
 // オフラインでもスマホ内に保存しておくファイルのリスト
 const ASSETS = [
   './',
-  'index.html',
-  'manifest.json',
-  'html5-qrcode.min.js',
-  'icon-192.png',
-  'icon-512.png'
+  './index.html',
+  './manifest.json',
+  './html5-qrcode.min.js',
+  './icon-192.png',
+  './icon-512.png'
 ];
 
 // ① アプリがインストールされたときに、ファイルをスマホに保存する
@@ -21,7 +21,7 @@ self.addEventListener('install', (event) => {
   self.skipWaiting();
 });
 
-// ② 【追加されたコード】アプリが更新されたとき、古いキャッシュを自動で削除する
+// ② アプリが更新されたとき、古いキャッシュを自動で削除する
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys()
