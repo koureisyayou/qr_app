@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>バーコードを よむ</title>
+    
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#4CAF50">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="バーコードを よむ">
+
+    <script src="html5-qrcode.min.js"></script>
+    
+    <style>
+        body {
+            font-family: 'Hiragino Kaku Gothic ProN', 'Meiryo', sans-serif;
+            text-align: center;
+            margin: 0;
+            padding: 20px;
+            background: #f7f9fa;
+            user-select: none;
+        }
+        h1 {
+            font-size: 26px;
+            color: #333;
+            margin-top: 10px;
+            margin-bottom: 5px;
+        }
+        .setsumei {
+            font-size: 20px;
+            font-weight: bold;
+            color: #555;
+            margin-bottom: 15px;
+            min-height: 30px;
+        }
+        /* カメラ枠 */
+        #reader {
+            width: 100%;
+            max-width: 450px;
+            margin: 0 auto;
+            background: white;
+            border: 5px solid #4CAF50;
+            border-radius: 16px;
+            overflow: hidden;
+        }
+        #reader button, #reader select {
+            display: none !important;
+        }
+        /* 結果表示エリア */
+        #result-box {
+            margin-top: 20px;
+            padding: 20px;
+            background: #ffffff;
+            border: 3px solid #ccc;
+            border-radius: 16px;
+            max-width: 450px;
+            margin-left: auto;
+            margin-right: auto;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.05);
+        }
+        #result {
+            font-size: 32px;
+            font-weight: bold;
+            color: #333;
+            word-break: break-all;
+            margin: 10px 0;
+        }
+        /* ボタンの共通スタイル */
+        .go-btn {
+            display: none; 
+            width: 100%;
+            max-width: 450px;
+            margin: 20px auto 0 auto;
+            padding: 24px;
+            font-size: 32px;
+            font-weight: bold;
+            color: white;
+            border: none;
+            border-radius: 16px;
+            cursor: pointer;
+        }
+        /* ひらくボタン（デフォルトは緑） */
+        #go-btn {
+            background-color: #2e7d32;
+            box-shadow: 0 8px #1b5e20;
+        }
+        #go-btn:active {
+            box-shadow: none;
+            transform: translateY(8px);
+        }
+        /* もう一度よみとるボタン（青） */
+        #retry-btn {
+            display: none;
+            background-color: #1565c0;
+            box-shadow: 0 8px #0d3c75;
+        }
+        #retry-btn:active {
+            box-shadow: none;
+            transform: translateY(8px);
+        }
+        /* 高齢者向けのホーム画面追加の案内表示 */
+        .pwa-guide {
+            margin-top: 40px;
+            font-size: 14px;
+            color: #777;
+            line-height: 1.6;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>バーコードを よむ</h1>
+    <p id="guide" class="setsumei">しかくのなかに うつしてください</p>
+    
+    <div id="reader"></div>
+    
+    <div id="result-box">
+        <div id="result">準備しています...</div>
+    </div>
+
+    <button id="go-btn" class="go-btn" onclick="openTargetUrl()">➔ ホームページをひらく</button>
+    <button id="retry-btn" class="go-btn" onclick="location.reload()">➔ もう一度よみとる</button>
+
+    <div class="pwa-guide">
+        ※ まいにち つかう ときは、スマホの メニューから<br>「ホーム画面に 追加」を してください。
+    </div>
+
+    <script>
+        // PWAのサービスワーカー登録
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('sw.js').catch(err => console.log("SW error", err));
+        }
+
+        let html5Qrcode = null; 
+        let targetUrl = "";
+        let audioCtx = null;
+
+        // ピッ音
+        function playBeep() {
+            try {
+                if (!audioCtx) {
+                    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                }
+                if (audioCtx && audioCtx.state === "suspended") {
+                    audioCtx.resume().catch(() => {});
+                }
+
+                let osc1 = audioCtx.createOscillator();
+                let gain1 = audioCtx.createGain();
+                osc1.type = 'sine';
+                osc1.frequency.setValueAtTime(2000, audioCtx.currentTime);
+                gain1.gain.setValueAtTime(0.2, audioCtx.currentTime);
+                osc1.connect(gain1);
+                gain1.connect(audioCtx.destination);
+                osc1.start();
+                osc1.stop(audioCtx.currentTime + 0.05);
+
+                setTimeout(() => {
+                    let osc2 = audioCtx.createOscillator();
+                    let gain2 = audioCtx.createGain();
+                    osc2.type = 'sine';
+                    osc2.frequency.setValueAtTime(2000, audioCtx.currentTime);
+                    gain2.gain.setValueAtTime(0.2, audioCtx.currentTime);
+                    osc2.connect(gain2);
+                    gain2.connect(audioCtx.destination);
+                    osc2.start();
+                    osc2.stop(audioCtx.currentTime + 0.05);
+                }, 60);
+            } catch (e) {
+                console.log("Audio error");
+            }
+        }
+
+        // カメラ起動
+        function startScanner() {
+            document.getElementById('result').innerText = "カメラをじゅんび しています";
+            document.getElementById('guide').innerText = "しかくのなかに うつしてください";
+            document.getElementById('go-btn').style.display = "none"; 
+            document.getElementById('retry-btn').style.display = "none"; 
+            targetUrl = "";
+
+            if (!html5Qrcode) {
+                html5Qrcode = new Html5Qrcode("reader");
+            }
+
+            const config = {
+                fps: 20, 
+                qrbox: { width: 320, height: 140 },
+                experimentalFeatures: { useBarCodeDetectorIfSupported: true }
+            };
+
+            html5Qrcode.start(
+                { facingMode: "environment" }, 
+                config, 
+                onScanSuccess, 
+                onScanFailure
+            ).then(() => {
+                document.getElementById('result').innerText = "うつしてください";
+            }).catch(err => {
+                document.getElementById('result').innerText = "うつりません";
+                document.getElementById('retry-btn').style.display = "block";
+            });
+        }
+
+        // よみとり成功時の処理（安全チェック機能付き）
+        function onScanSuccess(decodedText, decodedResult) {
+            playBeep();
+            if (navigator.vibrate) { navigator.vibrate([100, 50, 100]); }
+
+            document.getElementById('guide').innerText = "よみとれました";
+            
+            html5Qrcode.stop().then(() => {
+                let text = decodedText.trim().replace(/\u3000/g, " ");
+                let isUrl = false;
+                let fixed = text;
+
+                if (!/^https?:\/\//i.test(fixed) && fixed.includes(".") && !fixed.includes("@") && !fixed.includes(" ")) {
+                    fixed = "https://" + fixed;
+                }
+
+                if (/^https?:\/\//i.test(fixed)) { isUrl = true; }
+
+                if (isUrl) {
+                    try {
+                        let urlObj = new URL(fixed);
+                        targetUrl = fixed;
+                        const goBtn = document.getElementById('go-btn');
+                        const resultBlock = document.getElementById('result');
+
+                        // --- 🛡️ 危険チェック機能 ---
+                        let isDangerous = false;
+                        let warningReason = "";
+
+                        // ① 暗号化されていない (http)
+                        if (urlObj.protocol === "http:") {
+                            isDangerous = true;
+                            warningReason = "カギマークのない あぶない ページ かもしれません。";
+                        }
+                        // ② 詐欺サイトに多い見慣れないドメイン末尾
+                        else if (/\.(xyz|top|loan|click|work|link|club|biz)$/i.test(urlObj.hostname)) {
+                            isDangerous = true;
+                            warningReason = "み慣れない うしろの文字（ドメイン）です。ちゅうい してください。";
+                        }
+                        // ③ 有名企業を装う怪しいURL（本物ドメイン以外を検知）
+                        else if (/(amazon|card|rakuten|docomo|au|softbank|post|yamato)/i.test(urlObj.hostname)) {
+                            if (!/\.(amazon\.co\.jp|rakuten\.co\.jp|docomo\.ne\.jp|au\.com|softbank\.jp|japanpost\.jp|kuronekoyamato\.co\.jp)$/i.test(urlObj.hostname)) {
+                                isDangerous = true;
+                                warningReason = "有名なお店 や 会社の フリをした 偽物（にせもの）かもしれません！";
+                            }
+                        }
+
+                        // --- 🎨 結果に合わせてボタンと色を変化 ---
+                        if (isDangerous) {
+                            resultBlock.innerHTML = `<span style="color: #d32f2f; font-size: 24px;">⚠ あぶない かもしれません！</span><br><span style="font-size: 16px; color: #555;">${warningReason}</span>`;
+                            goBtn.innerText = "➔ ちゅういして ひらく（おさないでね）";
+                            goBtn.style.backgroundColor = "#e65100"; // 警告オレンジ色
+                            goBtn.style.boxShadow = "0 8px #b54000";
+                        } else {
+                            const isAppStore = targetUrl.includes("apps.apple.com") || targetUrl.includes("play.google.com");
+                            if (isAppStore) {
+                                resultBlock.innerText = "アプリがみつかりました";
+                                goBtn.innerText = "➔ アプリストアをひらく";
+                            } else {
+                                resultBlock.innerText = "ホームページがみつかりました";
+                                goBtn.innerText = "➔ ホームページをひらく";
+                            }
+                            goBtn.style.backgroundColor = "#2e7d32"; // 通常の安全な緑色
+                            goBtn.style.boxShadow = "0 8px #1b5e20";
+                        }
+
+                        setTimeout(() => { goBtn.style.display = "block"; }, 300);
+
+                    } catch (e) {
+                        document.getElementById('result').innerText = "読み取りました（URLエラー）：" + text;
+                    }
+                } else {
+                    document.getElementById('result').innerText = "読み取りました：" + text;
+                }
+
+                setTimeout(() => { document.getElementById('retry-btn').style.display = "block"; }, 300);
+
+            }).catch(err => {
+                console.error(err);
+                try { html5Qrcode.clear(); } catch(e) {}
+            });
+        }
+
+        function onScanFailure(error) {}
+
+        function openTargetUrl() {
+            if (targetUrl) {
+                window.location.href = targetUrl;
+            }
+        }
+
+        startScanner();
+    </script>
+</body>
+</html>
