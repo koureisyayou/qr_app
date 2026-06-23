@@ -1,4 +1,4 @@
-const CACHE_NAME = 'barcode-yomu-v1.0.3'; // バージョンを少し上げました
+const CACHE_NAME = 'barcode-yomu-v1.0.4'; // バージョンを少し上げました
 // 上の番号を更新毎に増やす
 
 // オフラインでもスマホ内に保存しておくファイルのリスト
