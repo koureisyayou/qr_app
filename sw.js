@@ -1,5 +1,5 @@
-const CACHE_NAME = 'barcode-yomu-v1.0.6'; // バージョンを少し上げました
-// 上の番号を更新毎に増やす
+// ★ ファイルを修正したら、この番号を必ず1つ上げてください
+const CACHE_NAME = 'barcode-yomu-v1.0.7';
 
 // オフラインでもスマホ内に保存しておくファイルのリスト
 const ASSETS = [
@@ -11,44 +11,60 @@ const ASSETS = [
   './icon-512.png'
 ];
 
-// ① アプリがインストールされたときに、ファイルをスマホに保存する
+// ① インストール時: ブラウザのHTTPキャッシュを迂回して、確実に最新版を保存する
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(ASSETS);
-    })
+    caches.open(CACHE_NAME)
+      .then((cache) => cache.addAll(
+        ASSETS.map((url) => new Request(url, { cache: 'reload' }))
+      ))
+      .then(() => self.skipWaiting())
   );
-  self.skipWaiting();
 });
 
-// ② アプリが更新されたとき、古いキャッシュを自動で削除する
+// ② 有効化時: 古いキャッシュを自動で削除する
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys()
-      .then((keys) => {
-        return Promise.all(
-          keys.map((key) => {
-            if (key !== CACHE_NAME) {
-              return caches.delete(key);
-            }
-          })
-        );
-      })
-      .then(() => {
-        return self.clients.claim();
-      })
+      .then((keys) => Promise.all(
+        keys.map((key) => (key !== CACHE_NAME ? caches.delete(key) : null))
+      ))
+      .then(() => self.clients.claim())
   );
 });
 
-// ③ インターネット通信の代わりに、スマホに保存したファイルを返す（機内モード対応）
+// ③ 取得時
 self.addEventListener('fetch', (event) => {
+  const req = event.request;
+
+  // GET以外、および別サイト（Google検索など）へのアクセスには関与しない
+  if (req.method !== 'GET') return;
+
+  let url;
+  try {
+    url = new URL(req.url);
+  } catch (e) {
+    return;
+  }
+  if (url.origin !== self.location.origin) return;
+
+  // HTMLはネット優先（つながらなければキャッシュ）
+  // → キャッシュ番号の上げ忘れがあっても、古い画面に固定されない
+  if (req.mode === 'navigate' || req.destination === 'document') {
+    event.respondWith(
+      fetch(req)
+        .then((res) => {
+          const copy = res.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put('./index.html', copy));
+          return res;
+        })
+        .catch(() => caches.match('./index.html').then((r) => r || caches.match('./')))
+    );
+    return;
+  }
+
+  // それ以外（JS・アイコンなど）はキャッシュ優先
   event.respondWith(
-    caches.match(event.request).then((response) => {
-      return response || fetch(event.request);
-    }).catch(() => {
-      if (event.request.mode === 'navigate') {
-        return caches.match('./');
-      }
-    })
+    caches.match(req).then((cached) => cached || fetch(req))
   );
 });
