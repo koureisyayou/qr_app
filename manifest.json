@@ -1,8 +1,10 @@
 {
-  "name": "バーコードを よむ",
-  "short_name": "バーコード",
-   "start_url": "./",
+  "name": "QRコードを よむ",
+  "short_name": "QRコード",
+  "start_url": "./",
+  "scope": "./",
   "display": "standalone",
+  "orientation": "portrait",
   "background_color": "#f7f9fa",
   "theme_color": "#4CAF50",
   "icons": [
@@ -15,6 +17,12 @@
       "src": "icon-512.png",
       "sizes": "512x512",
       "type": "image/png"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
     }
   ]
 }
